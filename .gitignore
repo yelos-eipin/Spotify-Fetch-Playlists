@@ -1,0 +1,5 @@
+config.ini
+test.json
+venv/
+input.dict
+__pycache__/
