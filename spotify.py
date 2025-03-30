@@ -135,3 +135,24 @@ class Spotify:
             return tracks
         else:
             raise Exception(f"Error fetching playlist items: {response.status_code}")
+
+    def create_playlist(self, name, description, public=False):
+        url = f"{self.base_url}/users/{self.userID}/playlists"
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "name": name,
+            "description": description,
+            "public": public
+        }
+        print('headers is ' + str(headers))
+        print('payload is ' + str(payload))
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code == 201:
+            return response.json()
+        else:
+            raise Exception(f"Error creating playlist: {response.status_code}, {response.text}")
+            
