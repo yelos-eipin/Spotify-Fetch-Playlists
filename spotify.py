@@ -1,12 +1,12 @@
 import requests
 import json
+import webbrowser
 from configparser import ConfigParser
+from urllib.parse import urlencode, urlparse, parse_qs
 
 config = ConfigParser(allow_no_value=True)
 config.sections()
 config.read('config.ini')
-
-import requests
 
 class Spotify:
     def __init__(self, spotify_account_config_section) -> None:
@@ -15,18 +15,34 @@ class Spotify:
         self.authUrl = auth_config['authUrl']
         self.tokenUrl = auth_config['tokenUrl']
         self.redirectUri = auth_config['redirectUri']    
+        self.userType = ''
+        self.validUserAuth = False
 
         self.spotifyAccountConfigSection = spotify_account_config_section
         if spotify_account_config_section == 'SRC':
             acct_config = config['SRC']
+            self.userType = 'SRC'
         elif spotify_account_config_section == 'DST':
             acct_config = config['DST']
+            self.userType = 'DST'
         else:
             raise ValueError("Invalid spotify_account_config_section value. Must be 'SRC' or 'DST'.")   
 
         self.userID = acct_config['userID']
         self.clientID = acct_config['clientID']
         self.clientSecret = acct_config['clientSecret']
+        self.scopes = acct_config['scopes']
+
+        if self.userType == 'DST':
+            # self.access_token = self.get_user_authorization_token()
+            self.access_token = self.getToken()
+        else:
+            # self.access_token = self.get_user_authorization_token()
+            self.access_token = self.getToken()
+        if self.access_token is None:
+            raise Exception("Error fetching token")
+        else:
+            print("Token fetched successfully: " + self.access_token)
 
         self.access_token = self.getToken()
         if self.access_token is None:
@@ -34,6 +50,54 @@ class Spotify:
         else:
             print("Token fetched successfully: " + self.access_token)
    
+   
+    def get_user_authorization_token(self):
+        """
+        Implements the Authorization Code Flow to get an access token for the end user.
+        """
+
+        # Step 1: Redirect user to Spotify's authorization page
+        auth_query_parameters = {
+            "client_id": self.clientID,
+            "response_type": "code",
+            "redirect_uri": self.redirectUri,
+            "scope": self.scopes,
+        }
+        auth_url = f"{self.authUrl}?{urlencode(auth_query_parameters)}"
+        print(f"Opening browser for user authorization: {auth_url}")
+        webbrowser.open(auth_url)
+
+        # Step 2: User logs in and Spotify redirects to redirectUri with a code
+        redirect_response = input("Paste the full redirect URL here: ")
+        parsed_url = urlparse(redirect_response)
+        code = parse_qs(parsed_url.query).get("code")
+
+        if not code:
+            raise Exception("Authorization code not found in the redirect URL.")
+        code = code[0]
+
+        # Step 3: Exchange the authorization code for an access token
+        token_data = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.redirectUri,
+            "client_id": self.clientID,
+            "client_secret": self.clientSecret,
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        try:
+            response = requests.post(self.tokenUrl, data=token_data, headers=headers)
+            response.raise_for_status()
+            token_response_data = response.json()
+            # print('Token response data: ' + str(token_response_data))
+            return token_response_data.get("access_token")
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching user authorization token: {e}")
+            return None
+        
     def getToken(self):
         """
         Fetches an access token from Spotify API using client credentials.
@@ -50,7 +114,8 @@ class Spotify:
         data = {
             "grant_type": "client_credentials",
             "client_id": self.clientID,
-            "client_secret": self.clientSecret
+            "client_secret": self.clientSecret,
+            "scope": self.scopes
         }
         
         # Set headers
@@ -67,6 +132,7 @@ class Spotify:
             
             # Parse JSON response and return the access token
             token_data = response.json()
+            # print('token_data is ' + str(token_data))
             return token_data.get("access_token")
             
         except requests.exceptions.RequestException as e:
@@ -81,8 +147,10 @@ class Spotify:
         }
         response = requests.get(url, headers=headers)
         print('url is ' + url)
-        print('headers is ' + str(headers))
+        # print('headers is ' + str(headers))
         if response.status_code == 200:
+            # print('response is ' + str(response))
+            # print('response text is ' + str(response.text))
             return response.json()
         else:
             raise Exception(f"Error fetching playlist: {response.status_code}") 
@@ -93,8 +161,8 @@ class Spotify:
             "Authorization": f"Bearer {self.access_token}",
         }
         response = requests.get(url, headers=headers)
-        print('url is ' + url)
-        print('headers is ' + str(headers))
+        # print('url is ' + url)
+        # print('headers is ' + str(headers))
         if response.status_code == 200:
             return response.json()
         else:
@@ -136,7 +204,48 @@ class Spotify:
         else:
             raise Exception(f"Error fetching playlist items: {response.status_code}")
 
-    def create_playlist(self, name, description, public=False):
+    def add_track_to_playlist(self, playlist_id, track_uris):
+        """
+        Adds one or more tracks to a Spotify playlist.
+
+        Args:
+            playlist_id (str): The ID of the playlist.
+            track_uris (list): A list of track URIs to add to the playlist.
+
+        Returns:
+            dict: The response from the Spotify API if successful.
+
+        Raises:
+            Exception: If the request fails.
+        """
+        # Check if the user is authenticated
+        # If not, get the user authorization token
+        if self.validUserAuth == False:
+            self.access_token = self.get_user_authorization_token()
+            self.validUserAuth = True
+
+        url = f"{self.base_url}/playlists/{playlist_id}/tracks"
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "uris": track_uris
+        }
+        # print('payload is ' + str(payload))
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code == 201:
+            return response.json()
+        else:
+            raise Exception(f"Error adding items to playlist: {response.status_code}, {response.text}")
+        
+    def create_playlist(self, name, description, public=True, collaborative=True):
+        if self.validUserAuth == False:
+            self.access_token = self.get_user_authorization_token()
+            self.validUserAuth = True
         url = f"{self.base_url}/users/{self.userID}/playlists"
         headers = {
             "Authorization": f"Bearer {self.access_token}",
@@ -147,8 +256,9 @@ class Spotify:
             "description": description,
             "public": public
         }
-        print('headers is ' + str(headers))
-        print('payload is ' + str(payload))
+        # print('headers is ' + str(headers))
+        # print('payload is ' + str(payload))
+        # print('url is ' + url)
         response = requests.post(url, headers=headers, json=payload)
 
         if response.status_code == 201:
